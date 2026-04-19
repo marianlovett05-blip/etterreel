@@ -1,4 +1,4 @@
-// EtterReel — Video Generation Routes
+// EtterReel â Video Generation Routes
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -7,7 +7,7 @@ const OpenAI = require('openai');
 const fs = require('fs');
 const path = require('path');
 
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ dest: '/tmp/' });
 const replicate = new Replicate({ auth: process.env.REPLICATE_API_KEY });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
