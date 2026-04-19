@@ -3,29 +3,18 @@
   "builds": [
     {
       "src": "etterreel-backend/server.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "etterreel-backend/public/**",
-      "use": "@vercel/static"
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "etterreel-backend/public/**"
+        ]
+      }
     }
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "etterreel-backend/server.js"
-    },
-    {
-      "src": "/",
-      "dest": "etterreel-backend/public/index.html"
-    },
-    {
-      "src": "/([^/]+\\.[^/]+)",
-      "dest": "etterreel-backend/public/$1"
-    },
-    {
       "src": "/(.*)",
-      "dest": "etterreel-backend/public/index.html"
+      "dest": "etterreel-backend/server.js"
     }
   ]
 }
