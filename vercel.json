@@ -16,8 +16,16 @@
       "dest": "etterreel-backend/server.js"
     },
     {
-      "src": "/(.*)",
+      "src": "/",
+      "dest": "etterreel-backend/public/index.html"
+    },
+    {
+      "src": "/([^/]+\\.[^/]+)",
       "dest": "etterreel-backend/public/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "etterreel-backend/public/index.html"
     }
   ]
 }
