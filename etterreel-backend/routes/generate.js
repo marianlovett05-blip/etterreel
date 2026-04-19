@@ -1,4 +1,4 @@
-// EtterReel â Video Generation Routes
+// EtterReel Ã¢ÂÂ Video Generation Routes
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -8,8 +8,8 @@ const fs = require('fs');
 const path = require('path');
 
 const upload = multer({ dest: '/tmp/' });
-const replicate = new Replicate({ auth: process.env.REPLICATE_API_KEY });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const replicate = new Replicate({ auth: process.env.REPLICATE_API_KEY || '' });
+const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
 const STYLE_PROMPTS = {
   cinematic: 'cinematic wide shot, ultra realistic, dramatic lighting, 8K, film grain',
