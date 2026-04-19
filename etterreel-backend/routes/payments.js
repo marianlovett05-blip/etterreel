@@ -1,25 +1,25 @@
 // ============================================================
-//  EtterReel — Stripe Payment Routes
+//  EtterReel â Stripe Payment Routes
 //  Handles: subscriptions, credit packs, free trial tracking
 // ============================================================
 
 const express = require('express');
 const router  = express.Router();
-const stripe  = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const stripe  = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
 
-// ─── Price IDs (set these up in your Stripe dashboard) ────
+// âââ Price IDs (set these up in your Stripe dashboard) ââââ
 const PRICES = {
-  creator_monthly: 'price_creator_monthly',  // $19/mo — replace with real Stripe Price ID
-  pro_monthly:     'price_pro_monthly',       // $49/mo — replace with real Stripe Price ID
+  creator_monthly: 'price_creator_monthly',  // $19/mo â replace with real Stripe Price ID
+  pro_monthly:     'price_pro_monthly',       // $49/mo â replace with real Stripe Price ID
   creator_yearly:  'price_creator_yearly',    // $13/mo billed yearly
   pro_yearly:      'price_pro_yearly',        // $34/mo billed yearly
-  credits_5:       'price_credits_5',         // $9  — 5 videos
-  credits_15:      'price_credits_15',        // $19 — 15 videos
-  credits_30:      'price_credits_30',        // $35 — 30 videos
-  credits_100:     'price_credits_100',       // $99 — 100 videos
+  credits_5:       'price_credits_5',         // $9  â 5 videos
+  credits_15:      'price_credits_15',        // $19 â 15 videos
+  credits_30:      'price_credits_30',        // $35 â 30 videos
+  credits_100:     'price_credits_100',       // $99 â 100 videos
 };
 
-// ─── POST /api/payments/checkout ─────────────────────────
+// âââ POST /api/payments/checkout âââââââââââââââââââââââââ
 // Creates a Stripe checkout session
 router.post('/checkout', async (req, res) => {
   try {
@@ -51,7 +51,7 @@ router.post('/checkout', async (req, res) => {
   }
 });
 
-// ─── POST /api/payments/webhook ──────────────────────────
+// âââ POST /api/payments/webhook ââââââââââââââââââââââââââ
 // Stripe calls this when a payment completes
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
@@ -67,14 +67,14 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object;
-      console.log(`✅ Payment complete for user: ${session.metadata.userId}`);
+      console.log(`â Payment complete for user: ${session.metadata.userId}`);
       // TODO: Update user credits/subscription in your database
       // addCreditsToUser(session.metadata.userId, session.metadata.priceType);
       break;
     }
     case 'customer.subscription.deleted': {
       const sub = event.data.object;
-      console.log(`❌ Subscription cancelled: ${sub.id}`);
+      console.log(`â Subscription cancelled: ${sub.id}`);
       // TODO: Remove subscription access from user
       break;
     }
@@ -83,7 +83,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
   res.json({ received: true });
 });
 
-// ─── GET /api/payments/credits/:userId ───────────────────
+// âââ GET /api/payments/credits/:userId âââââââââââââââââââ
 // Check how many credits a user has
 router.get('/credits/:userId', async (req, res) => {
   // TODO: Connect to your database
