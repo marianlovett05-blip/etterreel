@@ -4,12 +4,20 @@
     {
       "src": "etterreel-backend/server.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "etterreel-backend/public/**",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
     {
-      "src": "/(.*)",
+      "src": "/api/(.*)",
       "dest": "etterreel-backend/server.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "etterreel-backend/public/$1"
     }
   ]
 }
