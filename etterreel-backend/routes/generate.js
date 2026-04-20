@@ -1,84 +1,120 @@
-// EtterReel Ã¢ÂÂ Video Generation Routes
+// EtterReel — Video Generation Routes (fixed)
 const express = require('express');
-const router = express.Router();
-const multer = require('multer');
+const router  = express.Router();
+const multer  = require('multer');
 const Replicate = require('replicate');
-const OpenAI = require('openai');
-const fs = require('fs');
-const path = require('path');
 
-const upload = multer({ dest: '/tmp/' });
-const replicate = new Replicate({ auth: process.env.REPLICATE_API_KEY || '' });
-const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+// Accept both naming conventions for the API key
+const replicate = new Replicate({
+  auth: process.env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_KEY
+});
 
-const STYLE_PROMPTS = {
-  cinematic: 'cinematic wide shot, ultra realistic, dramatic lighting, 8K, film grain',
-  neon: 'neon city night, cyberpunk, glowing neon signs, rain reflections',
-  abstract: 'abstract art, flowing shapes, vibrant colors, digital painting',
-  nature: 'breathtaking nature landscape, golden hour, cinematic, 8K',
-  anime: 'anime style, highly detailed, studio ghibli inspired',
-  retro: 'retro 80s style, vaporwave aesthetics, synthwave colors',
-};
+// Store uploads in memory (Vercel serverless-safe)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 } // 20 MB
+});
 
+// Helper: expand prompt with GPT-4o-mini if key present
+async function expandPrompt(raw) {
+  if (!process.env.OPENAI_API_KEY) return raw;
+  try {
+    const OpenAI = require('openai');
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const r = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: 'Write a vivid, cinematic 2-sentence music video scene description for: "' + raw + '". Focus on visuals only.' }],
+      max_tokens: 100
+    });
+    return r.choices[0].message.content.trim();
+  } catch { return raw; }
+}
+
+// POST /api/generate/song-to-video
 router.post('/song-to-video', upload.single('song'), async (req, res) => {
   try {
-    const { style = 'cinematic', artistName = '', trackTitle = '' } = req.body;
-    if (!req.file) return res.status(400).json({ error: 'No song file uploaded' });
-    let moodDescription = 'energetic, emotional, powerful music';
-    if (process.env.OPENAI_API_KEY) {
-      const r = await openai.chat.completions.create({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: `Visual mood for music video: "${trackTitle}" by "${artistName}" - 15 words max.` }], max_tokens: 60 });
-      moodDescription = r.choices[0].message.content;
-    }
-    const styleModifier = STYLE_PROMPTS[style] || STYLE_PROMPTS.cinematic;
-    const imagePrompt = `Music video scene for "${trackTitle}", ${moodDescription}, ${styleModifier}, no text`;
-    const framePromises = Array.from({ length: 8 }, (_, i) =>
-      replicate.run('stability-ai/stable-diffusion:ac732df83cea7fff18b8472768c88ad041fa750ed7461b5f9a2aad6c64c4b5d6', { input: { prompt: `${imagePrompt}, scene ${i+1} of 8`, negative_prompt: 'text, watermark, blurry, low quality', width: 1024, height: 576, num_inference_steps: 25, guidance_scale: 7.5 } })
-    );
-    const frameUrls = await Promise.all(framePromises);
-    try { fs.unlinkSync(req.file.path); } catch(e) {}
-    res.json({ success: true, mode: 'song-to-video', frames: frameUrls, mood: moodDescription, style });
-  } catch (err) { res.status(500).json({ error: 'Generation failed', details: err.message }); }
+    const { style = 'cinematic', artistName = '', trackTitle = '', customStyle = '' } = req.body;
+    let prompt = customStyle || (style + ' music video');
+    if (artistName) prompt += ' for artist ' + artistName;
+    if (trackTitle) prompt += ', song titled "' + trackTitle + '"';
+    prompt += '. High-quality cinematography, atmospheric lighting, dynamic camera movement.';
+    const expanded = await expandPrompt(prompt);
+    const prediction = await replicate.predictions.create({
+      model: 'minimax/video-01',
+      input: { prompt: expanded, prompt_optimizer: true }
+    });
+    res.json({ predictionId: prediction.id, status: prediction.status });
+  } catch (err) {
+    console.error('song-to-video error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
+// POST /api/generate/text-to-video
 router.post('/text-to-video', async (req, res) => {
   try {
-    const { prompt, style = 'cinematic' } = req.body;
+    const { prompt, style = 'cinematic', customStyle = '' } = req.body;
     if (!prompt) return res.status(400).json({ error: 'No prompt provided' });
-    let expandedPrompt = prompt;
-    if (process.env.OPENAI_API_KEY) {
-      const r = await openai.chat.completions.create({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: `Expand this music video concept into a rich visual description (max 50 words): "${prompt}". Focus on visuals, lighting, colors, emotion.` }], max_tokens: 100 });
-      expandedPrompt = r.choices[0].message.content;
-    }
-    const fullPrompt = `${expandedPrompt}, ${STYLE_PROMPTS[style] || STYLE_PROMPTS.cinematic}, no text, music video frame`;
-    const frameUrls = await Promise.all(Array.from({ length: 6 }, (_, i) =>
-      replicate.run('stability-ai/stable-diffusion:ac732df83cea7fff18b8472768c88ad041fa750ed7461b5f9a2aad6c64c4b5d6', { input: { prompt: `${fullPrompt}, moment ${i+1}`, negative_prompt: 'text, watermark, blurry, low quality', width: 1024, height: 576, num_inference_steps: 25 } })
-    ));
-    res.json({ success: true, mode: 'text-to-video', frames: frameUrls, expandedPrompt, style });
-  } catch (err) { res.status(500).json({ error: 'Generation failed', details: err.message }); }
+    const fullPrompt = customStyle ? (customStyle + ': ' + prompt) : (style + ' style: ' + prompt + '. High-quality video, smooth motion, professional.');
+    const expanded = await expandPrompt(fullPrompt);
+    const prediction = await replicate.predictions.create({
+      model: 'minimax/video-01',
+      input: { prompt: expanded, prompt_optimizer: true }
+    });
+    res.json({ predictionId: prediction.id, status: prediction.status });
+  } catch (err) {
+    console.error('text-to-video error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
+// POST /api/generate/images-to-video
 router.post('/images-to-video', upload.array('images', 10), async (req, res) => {
   try {
-    if (!req.files || !req.files.length) return res.status(400).json({ error: 'No images uploaded' });
-    const clips = req.files.map(f => `/uploads/${path.basename(f.path)}`);
-    res.json({ success: true, mode: 'images-to-video', clips });
-  } catch (err) { res.status(500).json({ error: 'Generation failed', details: err.message }); }
+    if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No images uploaded' });
+    const { style = 'cinematic', prompt = '', customStyle = '' } = req.body;
+    const firstFile = req.files[0];
+    const imageBlob = new Blob([firstFile.buffer], { type: firstFile.mimetype });
+    const videoPrompt = customStyle || prompt || (style + ' music video, smooth cinematic camera movement, professional lighting');
+    const prediction = await replicate.predictions.create({
+      model: 'minimax/video-01-live',
+      input: { first_frame_image: imageBlob, prompt: videoPrompt, prompt_optimizer: true }
+    });
+    res.json({ predictionId: prediction.id, status: prediction.status });
+  } catch (err) {
+    console.error('images-to-video error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
+// POST /api/generate/lyrics
 router.post('/lyrics', async (req, res) => {
   try {
-    const { topic, genre, mood, artist, structure = 'verse-chorus' } = req.body;
-    if (!topic) return res.status(400).json({ error: 'Song topic is required' });
-    const structureGuide = { 'verse-chorus': 'Write: [Verse 1], [Chorus], [Verse 2], [Chorus]', 'verse-chorus-bridge': 'Write: [Verse 1], [Chorus], [Verse 2], [Chorus], [Bridge], [Chorus]', 'verse-hook': 'Write: [Verse 1], [Hook], [Verse 2], [Hook], [Verse 3], [Hook]', 'full': 'Write: [Intro], [Verse 1], [Pre-Chorus], [Chorus], [Verse 2], [Chorus], [Bridge], [Outro]' };
-    const prompt = `You are a professional songwriter. Write original song lyrics:\n- Topic: ${topic}\n- Genre: ${genre}\n- Mood: ${mood}\n- Structure: ${structureGuide[structure]}\n${artist ? 'Style of ' + artist : ''}\nRules: ORIGINAL lyrics, section labels in [brackets], 4-8 lines per section, no explanations.`;
-    const r = await openai.chat.completions.create({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: prompt }], max_tokens: 800, temperature: 0.85 });
-    res.json({ success: true, lyrics: r.choices[0].message.content, topic, genre, mood });
-  } catch (err) { res.status(500).json({ error: 'Lyrics generation failed', details: err.message }); }
+    const { theme, genre = 'pop', structure = 'verse-chorus' } = req.body;
+    if (!theme) return res.status(400).json({ error: 'Theme required' });
+    if (!process.env.OPENAI_API_KEY) return res.status(503).json({ error: 'OpenAI API key not configured on server' });
+    const OpenAI = require('openai');
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: 'Write original ' + genre + ' song lyrics about: ' + theme + '.\nStructure: ' + structure + '.\nLabel each section (Verse 1, Chorus, etc.).\nMake it emotional, vivid, and radio-ready. Just the lyrics, no explanation.' }],
+      max_tokens: 700
+    });
+    res.json({ lyrics: completion.choices[0].message.content.trim() });
+  } catch (err) {
+    console.error('lyrics error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
+// GET /api/generate/status/:predictionId
 router.get('/status/:predictionId', async (req, res) => {
-  try { res.json(await replicate.predictions.get(req.params.predictionId)); }
-  catch (err) { res.status(500).json({ error: err.message }); }
+  try {
+    const prediction = await replicate.predictions.get(req.params.predictionId);
+    res.json(prediction);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
