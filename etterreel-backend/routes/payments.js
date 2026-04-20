@@ -1,47 +1,44 @@
-// ============================================================
-//  EtterReel â Stripe Payment Routes
-//  Handles: subscriptions, credit packs, free trial tracking
-// ============================================================
-
 const express = require('express');
 const router  = express.Router();
-const stripe  = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
 
-// âââ Price IDs (set these up in your Stripe dashboard) ââââ
-const PRICES = {
-  creator_monthly: 'price_creator_monthly',  // $19/mo â replace with real Stripe Price ID
-  pro_monthly:     'price_pro_monthly',       // $49/mo â replace with real Stripe Price ID
-  creator_yearly:  'price_creator_yearly',    // $13/mo billed yearly
-  pro_yearly:      'price_pro_yearly',        // $34/mo billed yearly
-  credits_5:       'price_credits_5',         // $9  â 5 videos
-  credits_15:      'price_credits_15',        // $19 â 15 videos
-  credits_30:      'price_credits_30',        // $35 â 30 videos
-  credits_100:     'price_credits_100',       // $99 â 100 videos
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? require('stripe')(process.env.STRIPE_SECRET_KEY)
+  : null;
+
+const FRONTEND = process.env.FRONTEND_URL || 'https://www.etterreel.com';
+
+// Plans — no pre-created Price IDs needed, we use price_data
+const PLANS = {
+  creator_monthly:  { name: 'Creator Plan',  amount: 1900, interval: 'month', credits: 50  },
+  pro_monthly:      { name: 'Pro Plan',       amount: 4900, interval: 'month', credits: 200 },
+  credits_10:       { name: '10 Video Credits', amount: 999,  interval: null,  credits: 10  },
+  credits_25:       { name: '25 Video Credits', amount: 1999, interval: null,  credits: 25  },
+  credits_50:       { name: '50 Video Credits', amount: 3499, interval: null,  credits: 50  },
 };
 
-// âââ POST /api/payments/checkout âââââââââââââââââââââââââ
-// Creates a Stripe checkout session
+// POST /api/payments/checkout
 router.post('/checkout', async (req, res) => {
   try {
-    const { priceType, email, userId } = req.body;
+    if (!stripe) return res.status(503).json({ error: 'Stripe not configured. Add STRIPE_SECRET_KEY to Vercel env vars.' });
 
-    if (!PRICES[priceType]) {
-      return res.status(400).json({ error: 'Invalid price type' });
-    }
+    const { planType, email, userId } = req.body;
+    const plan = PLANS[planType];
+    if (!plan) return res.status(400).json({ error: 'Invalid plan type. Valid: ' + Object.keys(PLANS).join(', ') });
 
-    const isSubscription = priceType.includes('monthly') || priceType.includes('yearly');
+    const isRecurring = !!plan.interval;
+
+    const priceData = isRecurring
+      ? { currency: 'usd', product_data: { name: plan.name }, unit_amount: plan.amount, recurring: { interval: plan.interval } }
+      : { currency: 'usd', product_data: { name: plan.name + ' (' + plan.credits + ' credits)' }, unit_amount: plan.amount };
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
-      customer_email: email,
-      mode: isSubscription ? 'subscription' : 'payment',
-      line_items: [{
-        price: PRICES[priceType],
-        quantity: 1,
-      }],
-      success_url: `${process.env.FRONTEND_URL || 'http://localhost:3001'}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url:  `${process.env.FRONTEND_URL || 'http://localhost:3001'}/pricing`,
-      metadata: { userId, priceType },
+      mode: isRecurring ? 'subscription' : 'payment',
+      line_items: [{ price_data: priceData, quantity: 1 }],
+      success_url: FRONTEND + '/dashboard?payment=success&credits=' + plan.credits,
+      cancel_url:  FRONTEND + '/dashboard?payment=cancelled',
+      customer_email: email || undefined,
+      metadata: { userId: userId || '', planType, credits: String(plan.credits) }
     });
 
     res.json({ url: session.url });
@@ -51,50 +48,36 @@ router.post('/checkout', async (req, res) => {
   }
 });
 
-// âââ POST /api/payments/webhook ââââââââââââââââââââââââââ
-// Stripe calls this when a payment completes
+// POST /api/payments/webhook  (add STRIPE_WEBHOOK_SECRET to Vercel)
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
+
   const sig = req.headers['stripe-signature'];
   let event;
-
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
-    console.error('Webhook signature failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
+    return res.status(400).json({ error: 'Webhook signature error: ' + err.message });
   }
 
-  switch (event.type) {
-    case 'checkout.session.completed': {
-      const session = event.data.object;
-      console.log(`â Payment complete for user: ${session.metadata.userId}`);
-      // TODO: Update user credits/subscription in your database
-      // addCreditsToUser(session.metadata.userId, session.metadata.priceType);
-      break;
-    }
-    case 'customer.subscription.deleted': {
-      const sub = event.data.object;
-      console.log(`â Subscription cancelled: ${sub.id}`);
-      // TODO: Remove subscription access from user
-      break;
-    }
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    console.log('Payment complete:', session.metadata);
+    // TODO: Save credits to database for user session.metadata.userId
   }
 
   res.json({ received: true });
 });
 
-// âââ GET /api/payments/credits/:userId âââââââââââââââââââ
-// Check how many credits a user has
-router.get('/credits/:userId', async (req, res) => {
-  // TODO: Connect to your database
-  // For now returns a mock response
-  res.json({
-    userId: req.params.userId,
-    freeVideosUsed: 0,
-    freeVideosAllowed: 1,
-    credits: 0,
-    plan: 'free',
-  });
+// GET /api/payments/plans  — list available plans
+router.get('/plans', (req, res) => {
+  res.json(Object.entries(PLANS).map(([id, p]) => ({ id, ...p })));
+});
+
+// GET /api/payments/credits/:userId
+router.get('/credits/:userId', (req, res) => {
+  // TODO: Connect to database — returning demo value for now
+  res.json({ credits: 5, plan: 'free' });
 });
 
 module.exports = router;
